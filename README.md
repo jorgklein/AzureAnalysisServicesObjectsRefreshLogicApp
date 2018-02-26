@@ -1,12 +1,13 @@
-# Azure Analysis Services Model Refresh Logic App
-Logic App to refresh your Azure Analysis Services model.
+# Azure Analysis Services Objects Refresh Logic App
+Logic App to refresh your Azure Analysis Services objects.
 
 ## Prerequisites ##
 
-* Read the accompanying blog post from Jorg Klein here: https://jorgklein.com/
-* Create service principal that has the following permissions:
-  - Access to the AAS models
-  - Contributor role on the AAS instance in Azure
+* Read the accompanying blog post from Jorg Klein here: TODO
+* Read the accompanying blog post from Jorg Klein here: 
+* Create service principal that has the following permissions: (Step-by-step instructions can be found here: https://jorgklein.com/2018/01/30/process-azure-analysis-services-objects-from-azure-data-factory-v2-using-a-logic-app/)
+  - Azure Analysis Services Server administrator
+  - API Access: Azure Analysis Services (SQL Server Analysis Services Azure) - Read and Write all Models
 
 ## Deployment ##
 
