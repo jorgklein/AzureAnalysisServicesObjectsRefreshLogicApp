@@ -1,0 +1,799 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "logicAppName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "metadata": {
+                "description": "Name of the Logic App."
+            }
+        },
+        "logicAppLocation": {
+            "type": "string",
+            "defaultValue": "[resourceGroup().location]",
+            "allowedValues": [
+                "[resourceGroup().location]",
+                "australiaeast",
+                "australiasoutheast",
+                "brazilsouth",
+                "centralus",
+                "eastasia",
+                "eastus",
+                "eastus2",
+                "japaneast",
+                "japanwest",
+                "northcentralus",
+                "northeurope",
+                "southcentralus",
+                "southeastasia",
+                "westeurope",
+                "westus"
+            ],
+            "metadata": {
+                "description": "Location of the Logic App."
+            }
+        },
+        "analysisServicesLocation": {
+            "type": "string",
+            "defaultValue": "[resourceGroup().location]",
+            "allowedValues": [
+                "[resourceGroup().location]",
+                "australiaeast",
+                "australiasoutheast",
+                "brazilsouth",
+                "centralus",
+                "eastasia",
+                "eastus",
+                "eastus2",
+                "japaneast",
+                "japanwest",
+                "northcentralus",
+                "northeurope",
+                "southcentralus",
+                "southeastasia",
+                "westeurope",
+                "westus"
+            ],
+            "metadata": {
+                "description": "Location of the Analysis Services instance."
+            }
+        },
+        "analysisServicesName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "metadata": {
+                "description": "Name of the Analysis Services instance."
+            }
+        },
+        "analysisServicesModelName": {
+            "type": "string",
+            "minLength": 1,
+            "metadata": {
+                "description": "Name of the AAS model to refresh."
+            }
+        },
+        "analysisServicesResourceGroupName": {
+            "type": "string",
+            "defaultValue": "[resourceGroup().name]",
+            "minLength": 1,
+            "metadata": {
+                "description": "Name of the resource group that contains the Analysis Services instance. Only needed when it differs from the Logic App resource group."
+            }
+        },
+        "analysisServicesScaleUpTier": {
+            "type": "string",
+            "defaultValue": "Basic",
+            "allowedValues": [
+                "Developer",
+                "Basic",
+                "Standard"
+            ],
+            "metadata": {
+                "description": "Service tier to scale up to before refreshing the model."
+            }
+        },
+        "analysisServicesScaleUpLevel": {
+            "type": "string",
+            "defaultValue": "B2",
+            "allowedValues": [
+                "D1",
+                "B1",
+                "B2",
+                "S0",
+                "S1",
+                "S2",
+                "S4",
+                "S8",
+                "S9"
+            ],
+            "metadata": {
+                "description": "Service tier level to scale up to before refreshing the model."
+            }
+        },
+        "analysisServicesScaleDownTier": {
+            "type": "string",
+            "defaultValue": "Basic",
+            "allowedValues": [
+                "Developer",
+                "Basic",
+                "Standard"
+            ],
+            "metadata": {
+                "description": "Service tier to scale down to after refreshing the model."
+            }
+        },
+        "analysisServicesScaleDownLevel": {
+            "type": "string",
+            "defaultValue": "B1",
+            "allowedValues": [
+                "D1",
+                "B1",
+                "B2",
+                "S0",
+                "S1",
+                "S2",
+                "S4",
+                "S8",
+                "S9"
+            ],
+            "metadata": {
+                "description": "Service tier level to scale down to after refreshing the model."
+            }
+        },
+        "servicePrincipalClientId": {
+            "type": "string",
+            "minLength": 1,
+            "metadata": {
+                "description": "Service Principal Client ID."
+            }
+        },
+        "servicePrincipalClientSecret": {
+            "type": "securestring",
+            "minLength": 1,
+            "metadata": {
+                "description": "Service Principal Client Secret."
+            }
+        },
+        "azureActiveDirectoryTenantId": {
+            "type": "string",
+            "minLength": 1,
+            "metadata": {
+                "description": "Azure AD Tenant ID."
+            }
+        }
+    },
+    "variables": {
+        "singlequote": "'",
+        "analysisServicesArmUri": "[concat('https://management.azure.com', resourceId(subscription().subscriptionId, parameters('analysisServicesResourceGroupName'), 'Microsoft.AnalysisServices/servers' , parameters('analysisServicesName')), '?api-version=2016-05-16')]",
+        "analysisServicesRefreshUri": "[concat('https://', parameters('analysisServicesLocation'), '.asazure.windows.net/servers/', parameters('analysisServicesName'), '/models/', parameters('analysisServicesModelName'), '/refreshes')]"
+    },
+    "resources": [
+        {
+            "name": "[parameters('logicAppName')]",
+            "type": "Microsoft.Logic/workflows",
+            "location": "[parameters('logicAppLocation')]",
+            "tags": {
+                "displayName": "LogicApp"
+            },
+            "apiVersion": "2016-06-01",
+            "properties": {
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "actions": {
+                        "Check_if_any_action_failed_or_refreshOperationFailed": {
+                            "actions": {
+                                "Terminate": {
+                                    "inputs": {
+                                        "runStatus": "Failed"
+                                    },
+                                    "runAfter": {},
+                                    "type": "Terminate"
+                                }
+                            },
+                            "expression": "@or(equals(variables('refreshOperationFailed'), true), greater(length(body('Filter_errors_from_Upper_scope')), 0))",
+                            "runAfter": {
+                                "Compose": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "If"
+                        },
+                        "Compose": {
+                            "inputs": "@{length(body('Filter_errors_from_Upper_scope'))}\n@{equals(variables('refreshOperationFailed'), true)}\n@{greater(length(body('Filter_errors_from_Upper_scope')), 0)}",
+                            "runAfter": {
+                                "Filter_errors_from_Upper_scope": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Compose"
+                        },
+                        "Filter_errors_from_Upper_scope": {
+                            "inputs": {
+                                "from": "@result('Upper_scope')",
+                                "where": "@equals(item()['status'], 'Failed')"
+                            },
+                            "runAfter": {
+                                "Scale_AAS_down": [
+                                    "Succeeded",
+                                    "Failed",                                    
+                                    "TimedOut"
+                                ]
+                            },
+                            "type": "Query"
+                        },
+                        "Initialize_processingFinished_variable": {
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "processingFinished",
+                                        "type": "Boolean",
+                                        "value": "@false"
+                                    }
+                                ]
+                            },
+                            "runAfter": {},
+                            "type": "InitializeVariable"
+                        },
+                        "Initialize_refreshId_variable": {
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "refreshId",
+                                        "type": "String",
+                                        "value": "@{null}"
+                                    }
+                                ]
+                            },
+                            "runAfter": {
+                                "Initialize_upscalingFinished_variable": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable"
+                        },
+                        "Initialize_refreshOperationFailed_variable": {
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "refreshOperationFailed",
+                                        "type": "Boolean",
+                                        "value": "@false"
+                                    }
+                                ]
+                            },
+                            "runAfter": {
+                                "Initialize_refreshId_variable": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable"
+                        },
+                        "Initialize_upscalingFinished_variable": {
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "upscalingFinished",
+                                        "type": "Boolean",
+                                        "value": "@false"
+                                    }
+                                ]
+                            },
+                            "runAfter": {
+                                "Initialize_processingFinished_variable": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable"
+                        },
+                        "Scale_AAS_down": {
+                            "description": "This action always runs.",
+                            "inputs": {
+                                "authentication": {
+                                    "audience": "https://management.core.windows.net/",
+                                    "clientId": "[parameters('servicePrincipalClientId')]",
+                                    "secret": "[parameters('servicePrincipalClientSecret')]",
+                                    "tenant": "[parameters('azureActiveDirectoryTenantId')]",
+                                    "type": "ActiveDirectoryOAuth"
+                                },
+                                "body": {
+                                    "sku": {
+                                        "name": "[parameters('analysisServicesScaleDownLevel')]",
+                                        "tier": "[parameters('analysisServicesScaleDownTier')]"
+                                    }
+                                },
+                                "method": "PATCH",
+                                "uri": "[variables('analysisServicesArmUri')]"
+                            },
+                            "runAfter": {
+                                "Upper_scope": [
+                                    "Succeeded",
+                                    "Failed",
+                                    "TimedOut"                                    
+                                ]
+                            },
+                            "type": "Http"
+                        },
+                        "Scale_AAS_up": {
+                            "inputs": {
+                                "authentication": {
+                                    "audience": "https://management.core.windows.net/",
+                                    "clientId": "[parameters('servicePrincipalClientId')]",
+                                    "secret": "[parameters('servicePrincipalClientSecret')]",
+                                    "tenant": "[parameters('azureActiveDirectoryTenantId')]",
+                                    "type": "ActiveDirectoryOAuth"
+                                },
+                                "body": {
+                                    "sku": {
+                                        "name": "[parameters('analysisServicesScaleUpLevel')]",
+                                        "tier": "[parameters('analysisServicesScaleUpTier')]"
+                                    }
+                                },
+                                "method": "PATCH",
+                                "uri": "[variables('analysisServicesArmUri')]"
+                            },
+                            "runAfter": {
+                                "Initialize_refreshOperationFailed_variable": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Http"
+                        },
+                        "Upper_scope": {
+                            "actions": {
+                                "Check_if_POST_refresh_was_not_conflicting": {
+                                    "actions": {
+                                        "Check_if_refreshId_was_found": {
+                                            "actions": {
+                                                "Do_until_processing_is_finished": {
+                                                    "actions": {
+                                                        "Check_if_processing_has_ended": {
+                                                            "actions": {
+                                                                "Check_whether_refresh_finished_successful": {
+                                                                    "actions": {},
+                                                                    "description": "Todo: decide what to do when refresh was successful or not",
+                                                                    "else": {
+                                                                        "actions": {
+                                                                            "Set_refreshOperationFailed_variable_after_failed_refresh": {
+                                                                                "inputs": {
+                                                                                    "name": "refreshOperationFailed",
+                                                                                    "value": "@true"
+                                                                                },
+                                                                                "runAfter": {},
+                                                                                "type": "SetVariable"
+                                                                            }
+                                                                        }
+                                                                    },
+                                                                    "expression": "@equals(body('Parse_refresh_status')?['status'], 'succeeded')",
+                                                                    "runAfter": {
+                                                                        "Set_processingFinished_variable_to_true": [
+                                                                            "Succeeded"
+                                                                        ]
+                                                                    },
+                                                                    "type": "If"
+                                                                },
+                                                                "Set_processingFinished_variable_to_true": {
+                                                                    "inputs": {
+                                                                        "name": "processingFinished",
+                                                                        "value": "@true"
+                                                                    },
+                                                                    "runAfter": {},
+                                                                    "type": "SetVariable"
+                                                                }
+                                                            },
+                                                            "expression": "@not(equals(body('Parse_refresh_status')?['endTime'], null))",
+                                                            "runAfter": {
+                                                                "Parse_refresh_status": [
+                                                                    "Succeeded"
+                                                                ]
+                                                            },
+                                                            "type": "If"
+                                                        },
+                                                        "Delay_5_minutes": {
+                                                            "inputs": {
+                                                                "interval": {
+                                                                    "count": 5,
+                                                                    "unit": "Minute"
+                                                                }
+                                                            },
+                                                            "runAfter": {},
+                                                            "type": "Wait"
+                                                        },
+                                                        "GET_refresh_status_by_refresh_id": {
+                                                            "inputs": {
+                                                                "authentication": {
+                                                                    "audience": "https://*.asazure.windows.net",
+                                                                    "clientId": "[parameters('servicePrincipalClientId')]",
+                                                                    "secret": "[parameters('servicePrincipalClientSecret')]",
+                                                                    "tenant": "[parameters('azureActiveDirectoryTenantId')]",
+                                                                    "type": "ActiveDirectoryOAuth"
+                                                                },
+                                                                "method": "GET",
+                                                                "uri": "[concat(variables('analysisServicesRefreshUri'), '/', '@{variables(', variables('singlequote'), 'refreshId', variables('singlequote'), ')}')]"
+                                                            },
+                                                            "runAfter": {
+                                                                "Delay_5_minutes": [
+                                                                    "Succeeded"
+                                                                ]
+                                                            },
+                                                            "type": "Http"
+                                                        },
+                                                        "Parse_refresh_status": {
+                                                            "inputs": {
+                                                                "content": "@body('GET_refresh_status_by_refresh_id')",
+                                                                "schema": {
+                                                                    "properties": {
+                                                                        "currentRefreshType": {
+                                                                            "type": "string"
+                                                                        },
+                                                                        "endTime": {
+                                                                            "type": "string"
+                                                                        },
+                                                                        "messages": {
+                                                                            "items": {
+                                                                                "properties": {
+                                                                                    "message": {
+                                                                                        "type": "string"
+                                                                                    },
+                                                                                    "type": {
+                                                                                        "type": "string"
+                                                                                    }
+                                                                                },
+                                                                                "type": "object"
+                                                                            },
+                                                                            "type": "array"
+                                                                        },
+                                                                        "objects": {
+                                                                            "items": {
+                                                                                "properties": {
+                                                                                    "status": {
+                                                                                        "type": "string"
+                                                                                    }
+                                                                                },
+                                                                                "type": "object"
+                                                                            },
+                                                                            "type": "array"
+                                                                        },
+                                                                        "startTime": {
+                                                                            "type": "string"
+                                                                        },
+                                                                        "status": {
+                                                                            "type": "string"
+                                                                        },
+                                                                        "type": {
+                                                                            "type": "string"
+                                                                        }
+                                                                    },
+                                                                    "type": "object"
+                                                                }
+                                                            },
+                                                            "runAfter": {
+                                                                "GET_refresh_status_by_refresh_id": [
+                                                                    "Succeeded"
+                                                                ]
+                                                            },
+                                                            "type": "ParseJson"
+                                                        }
+                                                    },
+                                                    "expression": "@equals(variables('processingFinished'), true)",
+                                                    "limit": {
+                                                        "count": 60,
+                                                        "timeout": "PT1H"
+                                                    },
+                                                    "runAfter": {},
+                                                    "type": "Until"
+                                                }
+                                            },
+                                            "description": "When refreshId was not found something went wrong.",
+                                            "else": {
+                                                "actions": {
+                                                    "Set_refreshOperationFailed_after_no_refreshId_found": {
+                                                        "inputs": {
+                                                            "name": "refreshOperationFailed",
+                                                            "value": "@true"
+                                                        },
+                                                        "runAfter": {},
+                                                        "type": "SetVariable"
+                                                    }
+                                                }
+                                            },
+                                            "expression": "@not(equals(variables('refreshId'), null))",
+                                            "runAfter": {
+                                                "Set_refreshId": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "If"
+                                        },
+                                        "Filter_refreshes_array": {
+                                            "description": "This will filter all refreshes that do not have the status 'notStarted'. Otherwise we would loop over all refreshes.",
+                                            "inputs": {
+                                                "from": "@body('Parse_body_all_refreshes')",
+                                                "where": "@equals(item()['status'], 'notStarted')"
+                                            },
+                                            "runAfter": {
+                                                "Parse_body_all_refreshes": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "Query"
+                                        },
+                                        "GET_all_refreshes": {
+                                            "inputs": {
+                                                "authentication": {
+                                                    "audience": "https://*.asazure.windows.net",
+                                                    "clientId": "[parameters('servicePrincipalClientId')]",
+                                                    "secret": "[parameters('servicePrincipalClientSecret')]",
+                                                    "tenant": "[parameters('azureActiveDirectoryTenantId')]",
+                                                    "type": "ActiveDirectoryOAuth"
+                                                },
+                                                "method": "GET",
+                                                "uri": "[variables('analysisServicesRefreshUri')]"
+                                            },
+                                            "runAfter": {},
+                                            "type": "Http"
+                                        },
+                                        "Parse_body_all_refreshes": {
+                                            "inputs": {
+                                                "content": "@body('GET_all_refreshes')",
+                                                "schema": {
+                                                    "items": {
+                                                        "properties": {
+                                                            "endTime": {
+                                                                "type": "string"
+                                                            },
+                                                            "refreshId": {
+                                                                "type": "string"
+                                                            },
+                                                            "startTime": {
+                                                                "type": "string"
+                                                            },
+                                                            "status": {
+                                                                "type": "string"
+                                                            }
+                                                        },
+                                                        "required": [
+                                                            "refreshId",
+                                                            "startTime",
+                                                            "status"
+                                                        ],
+                                                        "type": "object"
+                                                    },
+                                                    "type": "array"
+                                                }
+                                            },
+                                            "runAfter": {
+                                                "GET_all_refreshes": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "ParseJson"
+                                        },
+                                        "Set_refreshId": {
+                                            "description": "This gets the first refreshId found in the filtered list. Normally this would only contain one element.",
+                                            "inputs": {
+                                                "name": "refreshId",
+                                                "value": "@first(body('Filter_refreshes_array'))?['refreshId']"
+                                            },
+                                            "runAfter": {
+                                                "Filter_refreshes_array": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "SetVariable"
+                                        }
+                                    },
+                                    "description": "Checking whether previous action resulted in 200. Just for sanity because 409 conflict will fail workflow.",
+                                    "else": {
+                                        "actions": {
+                                            "Set_refreshOperationFailed_after_unkown_status_code": {
+                                                "inputs": {
+                                                    "name": "refreshOperationFailed",
+                                                    "value": "@true"
+                                                },
+                                                "runAfter": {},
+                                                "type": "SetVariable"
+                                            }
+                                        }
+                                    },
+                                    "expression": "@equals(outputs('POST_refresh')['statusCode'], 200)",
+                                    "runAfter": {
+                                        "POST_refresh": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "If"
+                                },
+                                "POST_refresh": {
+                                    "inputs": {
+                                        "authentication": {
+                                            "audience": "https://*.asazure.windows.net",
+                                            "clientId": "[parameters('servicePrincipalClientId')]",
+                                            "secret": "[parameters('servicePrincipalClientSecret')]",
+                                            "tenant": "[parameters('azureActiveDirectoryTenantId')]",
+                                            "type": "ActiveDirectoryOAuth"
+                                        },
+                                        "body": {
+                                            "CommitMode": "transactional",
+                                            "MaxParallelism": 2,
+                                            "Objects": [
+                                                {
+                                                    "database": "[parameters('analysisServicesModelName')]"
+                                                }
+                                            ],
+                                            "RetryCount": 2,
+                                            "Type": "Full"
+                                        },
+                                        "method": "POST",
+                                        "uri": "[variables('analysisServicesRefreshUri')]"
+                                    },
+                                    "runAfter": {
+                                        "Until_scaling_is_finished": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "Http"
+                                },
+                                "Until_scaling_is_finished": {
+                                    "actions": {
+                                        "Check_whether_scaling_is_finished": {
+                                            "actions": {
+                                                "Set_variable": {
+                                                    "inputs": {
+                                                        "name": "upscalingFinished",
+                                                        "value": "@true"
+                                                    },
+                                                    "runAfter": {},
+                                                    "type": "SetVariable"
+                                                }
+                                            },
+                                            "expression": "@equals(body('Parse_AAS_scaling_status')?['properties']?['provisioningState'], 'Succeeded')",
+                                            "runAfter": {
+                                                "Parse_AAS_scaling_status": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "If"
+                                        },
+                                        "Delay": {
+                                            "inputs": {
+                                                "interval": {
+                                                    "count": 1,
+                                                    "unit": "Minute"
+                                                }
+                                            },
+                                            "runAfter": {},
+                                            "type": "Wait"
+                                        },
+                                        "GET_AAS_scaling_status": {
+                                            "inputs": {
+                                                "authentication": {
+                                                    "audience": "https://management.core.windows.net/",
+                                                    "clientId": "[parameters('servicePrincipalClientId')]",
+                                                    "secret": "[parameters('servicePrincipalClientSecret')]",
+                                                    "tenant": "[parameters('azureActiveDirectoryTenantId')]",
+                                                    "type": "ActiveDirectoryOAuth"
+                                                },
+                                                "method": "GET",
+                                                "uri": "[variables('analysisServicesArmUri')]"
+                                            },
+                                            "runAfter": {
+                                                "Delay": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "Http"
+                                        },
+                                        "Parse_AAS_scaling_status": {
+                                            "inputs": {
+                                                "content": "@body('GET_AAS_scaling_status')",
+                                                "schema": {
+                                                    "properties": {
+                                                        "id": {
+                                                            "type": "string"
+                                                        },
+                                                        "location": {
+                                                            "type": "string"
+                                                        },
+                                                        "name": {
+                                                            "type": "string"
+                                                        },
+                                                        "properties": {
+                                                            "properties": {
+                                                                "asAdministrators": {
+                                                                    "properties": {
+                                                                        "members": {
+                                                                            "items": {
+                                                                                "type": "string"
+                                                                            },
+                                                                            "type": "array"
+                                                                        }
+                                                                    },
+                                                                    "type": "object"
+                                                                },
+                                                                "managedMode": {
+                                                                    "type": "number"
+                                                                },
+                                                                "provisioningState": {
+                                                                    "type": "string"
+                                                                },
+                                                                "serverFullName": {
+                                                                    "type": "string"
+                                                                },
+                                                                "serverMonitorMode": {
+                                                                    "type": "number"
+                                                                },
+                                                                "state": {
+                                                                    "type": "string"
+                                                                }
+                                                            },
+                                                            "type": "object"
+                                                        },
+                                                        "sku": {
+                                                            "properties": {
+                                                                "name": {
+                                                                    "type": "string"
+                                                                },
+                                                                "tier": {
+                                                                    "type": "string"
+                                                                }
+                                                            },
+                                                            "type": "object"
+                                                        },
+                                                        "tags": {
+                                                            "properties": {},
+                                                            "type": "object"
+                                                        },
+                                                        "type": {
+                                                            "type": "string"
+                                                        }
+                                                    },
+                                                    "type": "object"
+                                                }
+                                            },
+                                            "runAfter": {
+                                                "GET_AAS_scaling_status": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "ParseJson"
+                                        }
+                                    },
+                                    "expression": "@equals(variables('upscalingFinished'), true)",
+                                    "limit": {
+                                        "count": 60,
+                                        "timeout": "PT1H"
+                                    },
+                                    "runAfter": {},
+                                    "type": "Until"
+                                }
+                            },
+                            "runAfter": {
+                                "Scale_AAS_up": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Scope"
+                        }
+                    },
+                    "contentVersion": "1.0.0.0",
+                    "outputs": {},
+                    "parameters": {},
+                    "triggers": {
+                        "manual": {
+                            "inputs": {
+                                "schema": {}
+                            },
+                            "kind": "Http",
+                            "type": "Request"
+                        }
+                    }
+                },
+                "parameters": {}
+            }
+        }
+    ],
+    "outputs": {}
+}
