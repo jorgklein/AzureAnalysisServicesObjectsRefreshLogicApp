@@ -13,7 +13,7 @@ Logic App to refresh your Azure Analysis Services objects.
 
 1. Click this button (hold CTRL while clicking to open in a new tab):
 
-    <a target="_blank" id="deploy-to-azure"  href="https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FStefanPuntNL%2FAzureAnalysisServicesRefreshLogicApp%2Fmaster%2FLogicApp.json"><img src="http://azuredeploy.net/deploybutton.png"/></a>
+<a target="_blank" id="deploy-to-azure"  href="https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fjorgklein%2FAzureAnalysisServicesObjectsRefreshLogicApp%2Fmaster%2FLogicApp.json"><img src="http://azuredeploy.net/deploybutton.png"/></a>
 
 2. Fill the required parameters, agree with the terms and click on Purchase
 3. After the deployment go to the created resource group and click on the Logic App resource
